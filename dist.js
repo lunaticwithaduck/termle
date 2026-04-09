@@ -3,8 +3,10 @@ import React2 from "react";
 import { render } from "ink";
 
 // src/App.tsx
-import { useState, useEffect, useRef } from "react";
-import { Box, Text, useInput, useApp, useAnimation } from "ink";
+import { Box as Box7, Text as Text6 } from "ink";
+
+// src/hooks/useWordList.ts
+import { useState, useEffect } from "react";
 
 // src/words.ts
 var WORDS = [
@@ -805,8 +807,7 @@ var WORDS = [
   "zebra"
 ];
 
-// src/App.tsx
-import { jsx, jsxs } from "react/jsx-runtime";
+// src/constants.ts
 var WORD_LENGTH = 5;
 var MAX_GUESSES = 6;
 var WORDLE_LIST_URL = "https://raw.githubusercontent.com/tabatkins/wordle-list/main/words";
@@ -815,17 +816,87 @@ var KEYBOARD_ROWS = [
   ["A", "S", "D", "F", "G", "H", "J", "K", "L"],
   ["ENTER", "Z", "X", "C", "V", "B", "N", "M", "\u232B"]
 ];
-var BOUNCE_FRAMES = ["\u2584", "\u2585", "\u2586", "\u2587", "\u2588", "\u2587", "\u2586", "\u2585", "\u2584"];
+var BOUNCE_FRAMES = [
+  "\u2584",
+  "\u2585",
+  "\u2586",
+  "\u2587",
+  "\u2588",
+  "\u2587",
+  "\u2586",
+  "\u2585",
+  "\u2584"
+];
+var SPINNER_FRAMES = [
+  "\u280B",
+  "\u2819",
+  "\u2839",
+  "\u2838",
+  "\u283C",
+  "\u2834",
+  "\u2826",
+  "\u2827",
+  "\u2807",
+  "\u280F"
+];
+var STATUS_PRIORITY = {
+  correct: 3,
+  present: 2,
+  absent: 1
+};
+var SHAKE_DURATION = 6;
+var JUMP_TOTAL = 7;
+var REVEAL_TOTAL = WORD_LENGTH * 2 + 1;
+
+// src/hooks/useWordList.ts
+function useWordList() {
+  const [state, setState] = useState({ words: null, error: null });
+  useEffect(() => {
+    fetch(WORDLE_LIST_URL).then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.text();
+    }).then((text) => {
+      const words = text.trim().split("\n").map((w) => w.trim().toLowerCase()).filter((w) => w.length === WORD_LENGTH);
+      setState({ words, error: null });
+    }).catch((err) => {
+      setState({
+        words: WORDS,
+        error: `Failed to fetch word list (${err.message}), using built-in list.`
+      });
+    });
+  }, []);
+  return state;
+}
+
+// src/components/LoadingSpinner.tsx
+import { Box, Text, useAnimation } from "ink";
+import { jsx, jsxs } from "react/jsx-runtime";
+function LoadingSpinner() {
+  const { frame } = useAnimation({ interval: 80 });
+  return /* @__PURE__ */ jsxs(Box, { paddingY: 1, alignItems: "center", flexDirection: "column", children: [
+    /* @__PURE__ */ jsx(Text, { bold: true, color: "white", children: " T E R M L E " }),
+    /* @__PURE__ */ jsxs(Box, { marginTop: 1, gap: 1, children: [
+      /* @__PURE__ */ jsx(Text, { color: "green", children: SPINNER_FRAMES[frame % SPINNER_FRAMES.length] }),
+      /* @__PURE__ */ jsx(Text, { color: "gray", children: "Fetching word list\u2026" })
+    ] })
+  ] });
+}
+
+// src/Game.tsx
+import { useState as useState5 } from "react";
+import { Box as Box6, Text as Text5, useInput, useApp, useAnimation as useAnimation5 } from "ink";
+
+// src/utils.ts
 function pickRandom(words) {
   return words[Math.floor(Math.random() * words.length)];
 }
 function evaluateGuess(guess, target) {
   const result = Array(WORD_LENGTH).fill("absent");
-  const targetArr = target.split("");
-  const guessArr = guess.split("");
+  const targetChars = target.split("");
+  const guessChars = guess.split("");
   const used = Array(WORD_LENGTH).fill(false);
   for (let i = 0; i < WORD_LENGTH; i++) {
-    if (guessArr[i] === targetArr[i]) {
+    if (guessChars[i] === targetChars[i]) {
       result[i] = "correct";
       used[i] = true;
     }
@@ -833,7 +904,7 @@ function evaluateGuess(guess, target) {
   for (let i = 0; i < WORD_LENGTH; i++) {
     if (result[i] === "correct") continue;
     for (let j = 0; j < WORD_LENGTH; j++) {
-      if (!used[j] && guessArr[i] === targetArr[j]) {
+      if (!used[j] && guessChars[i] === targetChars[j]) {
         result[i] = "present";
         used[j] = true;
         break;
@@ -848,14 +919,111 @@ function tileAccentColor(status) {
   if (status === "absent") return "gray";
   return void 0;
 }
-function Tile({ letter, status, revealPhase = 2, bounceFrame, jumpedUp = false }) {
+function mergeLetterStatuses(current, word, evaluation) {
+  const next = { ...current };
+  for (let i = 0; i < word.length; i++) {
+    const ch = word[i];
+    const incoming = evaluation[i];
+    const existing = next[ch];
+    if (existing === void 0 || STATUS_PRIORITY[incoming] > STATUS_PRIORITY[existing]) {
+      next[ch] = incoming;
+    }
+  }
+  return next;
+}
+
+// src/hooks/useShake.ts
+import { useState as useState2, useEffect as useEffect2 } from "react";
+import { useAnimation as useAnimation2 } from "ink";
+function useShake() {
+  const [shaking, setShaking] = useState2(false);
+  const { frame, reset } = useAnimation2({ interval: 60, isActive: shaking });
+  useEffect2(() => {
+    if (shaking && frame >= SHAKE_DURATION) {
+      setShaking(false);
+    }
+  }, [frame, shaking]);
+  function trigger() {
+    reset();
+    setShaking(true);
+  }
+  const offset = shaking ? frame % 2 === 0 ? -1 : 1 : 0;
+  return { offset, trigger };
+}
+
+// src/hooks/useReveal.ts
+import { useState as useState3, useRef, useEffect as useEffect3 } from "react";
+import { useAnimation as useAnimation3 } from "ink";
+function useReveal(onComplete) {
+  const [revealRow, setRevealRow] = useState3(null);
+  const pendingRef = useRef(null);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+  const { frame, reset } = useAnimation3({
+    interval: 150,
+    isActive: revealRow !== null
+  });
+  useEffect3(() => {
+    if (revealRow === null || pendingRef.current === null) return;
+    if (frame >= REVEAL_TOTAL) {
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      setRevealRow(null);
+      onCompleteRef.current(pending);
+    }
+  }, [frame, revealRow]);
+  function startReveal(rowIndex, pending) {
+    pendingRef.current = pending;
+    setRevealRow(rowIndex);
+    reset();
+  }
+  function revealProgressForRow(rowIndex) {
+    return rowIndex === revealRow ? frame : REVEAL_TOTAL;
+  }
+  return { revealProgressForRow, startReveal };
+}
+
+// src/hooks/useJump.ts
+import { useState as useState4, useEffect as useEffect4 } from "react";
+import { useAnimation as useAnimation4 } from "ink";
+function useJump() {
+  const [jumpRow, setJumpRow] = useState4(null);
+  const { frame, reset } = useAnimation4({ interval: 80, isActive: jumpRow !== null });
+  useEffect4(() => {
+    if (jumpRow !== null && frame >= JUMP_TOTAL) {
+      setJumpRow(null);
+    }
+  }, [frame, jumpRow]);
+  function startJump(rowIndex) {
+    reset();
+    setJumpRow(rowIndex);
+  }
+  function jumpFrameForRow(rowIndex) {
+    return rowIndex === jumpRow ? frame : -1;
+  }
+  return { jumpFrameForRow, startJump };
+}
+
+// src/components/Row.tsx
+import { Box as Box3 } from "ink";
+
+// src/components/Tile.tsx
+import { Box as Box2, Text as Text2 } from "ink";
+import { jsx as jsx2, jsxs as jsxs2 } from "react/jsx-runtime";
+function Tile({
+  letter,
+  status,
+  revealPhase = 2,
+  bounceFrame,
+  jumpedUp = false
+}) {
   const showColor = revealPhase === 2 && status !== null;
   const accent = showColor ? tileAccentColor(status) : void 0;
   const borderColor = accent ?? (letter.trim() ? "white" : "gray");
   const displayLetter = revealPhase === 1 ? " " : letter.toUpperCase() || " ";
   const finalLetter = bounceFrame !== void 0 ? BOUNCE_FRAMES[bounceFrame % BOUNCE_FRAMES.length] : displayLetter;
-  return /* @__PURE__ */ jsx(
-    Box,
+  return /* @__PURE__ */ jsx2(
+    Box2,
     {
       borderStyle: "single",
       borderColor,
@@ -864,7 +1032,7 @@ function Tile({ letter, status, revealPhase = 2, bounceFrame, jumpedUp = false }
       alignItems: jumpedUp ? "flex-start" : "center",
       justifyContent: "center",
       marginRight: 1,
-      children: /* @__PURE__ */ jsxs(Text, { bold: showColor, color: accent ?? "white", children: [
+      children: /* @__PURE__ */ jsxs2(Text2, { bold: showColor, color: accent ?? "white", children: [
         " ",
         finalLetter,
         " "
@@ -872,6 +1040,9 @@ function Tile({ letter, status, revealPhase = 2, bounceFrame, jumpedUp = false }
     }
   );
 }
+
+// src/components/Row.tsx
+import { jsx as jsx3 } from "react/jsx-runtime";
 function Row({
   guess,
   evaluation,
@@ -883,9 +1054,9 @@ function Row({
   jumpFrame
 }) {
   const letters = isActive ? currentInput.padEnd(WORD_LENGTH, " ").split("") : guess ? guess.split("") : Array(WORD_LENGTH).fill(" ");
-  return /* @__PURE__ */ jsx(Box, { marginLeft: shakeOffset, marginBottom: 0, children: letters.map((letter, i) => {
+  return /* @__PURE__ */ jsx3(Box3, { marginLeft: shakeOffset, marginBottom: 0, children: letters.map((letter, i) => {
     let revealPhase = 2;
-    if (evaluation && revealProgress <= WORD_LENGTH * 2) {
+    if (evaluation !== null && revealProgress <= WORD_LENGTH * 2) {
       const tileReveal = revealProgress - i * 2;
       if (tileReveal <= 0) revealPhase = 0;
       else if (tileReveal === 1) revealPhase = 1;
@@ -894,11 +1065,11 @@ function Row({
     const bounceFrame = winBounceFrame !== null ? winBounceFrame + i * 2 : void 0;
     const relFrame = jumpFrame - i;
     const jumpedUp = evaluation?.[i] === "correct" && relFrame >= 0 && relFrame < 2;
-    return /* @__PURE__ */ jsx(
+    return /* @__PURE__ */ jsx3(
       Tile,
       {
         letter,
-        status: evaluation ? evaluation[i] : null,
+        status: evaluation?.[i] ?? null,
         revealPhase,
         bounceFrame,
         jumpedUp
@@ -907,15 +1078,24 @@ function Row({
     );
   }) });
 }
-function KeyboardKey({
-  letter,
-  status
-}) {
+
+// src/components/Keyboard.tsx
+import { Box as Box4, Text as Text3 } from "ink";
+import { jsx as jsx4 } from "react/jsx-runtime";
+function KeyboardKey({ letter, status }) {
   const accent = status ? tileAccentColor(status) : void 0;
-  return /* @__PURE__ */ jsx(Box, { marginRight: 1, children: /* @__PURE__ */ jsx(Text, { color: accent ?? "white", bold: !!accent, dimColor: status === "absent", children: letter }) });
+  return /* @__PURE__ */ jsx4(Box4, { marginRight: 1, children: /* @__PURE__ */ jsx4(
+    Text3,
+    {
+      color: accent ?? "white",
+      bold: !!accent,
+      dimColor: status === "absent",
+      children: letter
+    }
+  ) });
 }
 function Keyboard({ letterStatuses }) {
-  return /* @__PURE__ */ jsx(Box, { flexDirection: "column", marginTop: 1, children: KEYBOARD_ROWS.map((row, i) => /* @__PURE__ */ jsx(Box, { justifyContent: "center", children: row.map((key) => /* @__PURE__ */ jsx(
+  return /* @__PURE__ */ jsx4(Box4, { flexDirection: "column", marginTop: 1, children: KEYBOARD_ROWS.map((row, i) => /* @__PURE__ */ jsx4(Box4, { justifyContent: "center", children: row.map((key) => /* @__PURE__ */ jsx4(
     KeyboardKey,
     {
       letter: key,
@@ -924,74 +1104,67 @@ function Keyboard({ letterStatuses }) {
     key
   )) }, i)) });
 }
-var SHAKE_DURATION = 6;
+
+// src/components/StatusMessage.tsx
+import { Box as Box5, Text as Text4 } from "ink";
+import { Fragment, jsx as jsx5, jsxs as jsxs3 } from "react/jsx-runtime";
+function StatusMessage({
+  message,
+  gameState,
+  guessCount,
+  target
+}) {
+  return /* @__PURE__ */ jsxs3(Fragment, { children: [
+    /* @__PURE__ */ jsx5(Box5, { height: 1, marginTop: 1, children: message ? /* @__PURE__ */ jsx5(Text4, { color: "red", bold: true, children: message }) : /* @__PURE__ */ jsx5(Text4, { children: " " }) }),
+    gameState === "won" && /* @__PURE__ */ jsxs3(Box5, { flexDirection: "column", alignItems: "center", children: [
+      /* @__PURE__ */ jsxs3(Text4, { color: "green", bold: true, children: [
+        "You got it in ",
+        guessCount,
+        "!"
+      ] }),
+      /* @__PURE__ */ jsx5(Text4, { color: "gray", children: "Enter to play again \xB7 Q to quit" })
+    ] }),
+    gameState === "lost" && /* @__PURE__ */ jsxs3(Box5, { flexDirection: "column", alignItems: "center", children: [
+      /* @__PURE__ */ jsxs3(Text4, { color: "red", bold: true, children: [
+        "The word was: ",
+        target.toUpperCase()
+      ] }),
+      /* @__PURE__ */ jsx5(Text4, { color: "gray", children: "Enter to play again \xB7 Q to quit" })
+    ] })
+  ] });
+}
+
+// src/Game.tsx
+import { jsx as jsx6, jsxs as jsxs4 } from "react/jsx-runtime";
 function Game({ words }) {
   const { exit } = useApp();
-  const [wordSet] = useState(() => new Set(words));
-  const [target, setTarget] = useState(() => pickRandom(words));
-  const [guesses, setGuesses] = useState([]);
-  const [evaluations, setEvaluations] = useState([]);
-  const [currentInput, setCurrentInput] = useState("");
-  const [gameState, setGameState] = useState("playing");
-  const [message, setMessage] = useState("");
-  const [letterStatuses, setLetterStatuses] = useState({});
-  const [shaking, setShaking] = useState(false);
-  const shakeFramesLeft = useRef(0);
-  const { frame: shakeFrame, reset: resetShake } = useAnimation({
-    interval: 60,
-    isActive: shaking
-  });
-  const [revealRow, setRevealRow] = useState(null);
-  const pendingResult = useRef(null);
-  const { frame: revealFrame, reset: resetReveal } = useAnimation({
-    interval: 150,
-    isActive: revealRow !== null
-  });
-  const [bouncing, setBouncing] = useState(false);
-  const { frame: bounceFrame } = useAnimation({
-    interval: 80,
-    isActive: bouncing
-  });
-  const [jumpRow, setJumpRow] = useState(null);
-  const { frame: jumpFrame, reset: resetJump } = useAnimation({
-    interval: 80,
-    isActive: jumpRow !== null
-  });
-  const JUMP_TOTAL = WORD_LENGTH + 2;
-  useEffect(() => {
-    if (!shaking) return;
-    shakeFramesLeft.current = SHAKE_DURATION;
-  }, [shaking]);
-  useEffect(() => {
-    if (!shaking) return;
-    shakeFramesLeft.current -= 1;
-    if (shakeFramesLeft.current <= 0) setShaking(false);
-  }, [shakeFrame]);
-  const revealTotal = WORD_LENGTH * 2 + 1;
-  useEffect(() => {
-    if (revealRow === null || !pendingResult.current) return;
-    if (revealFrame >= revealTotal) {
-      const { guesses: g, evals: e, letterStatuses: ls, nextState } = pendingResult.current;
-      const finishedRowIndex = g.length - 1;
-      const hasCorrect = e[finishedRowIndex].some((s) => s === "correct");
-      pendingResult.current = null;
-      setGuesses(g);
-      setEvaluations(e);
-      setLetterStatuses(ls);
-      setRevealRow(null);
-      setGameState(nextState);
-      if (nextState === "won") {
+  const [wordSet] = useState5(() => new Set(words));
+  const [target, setTarget] = useState5(() => pickRandom(words));
+  const [guesses, setGuesses] = useState5([]);
+  const [evaluations, setEvaluations] = useState5([]);
+  const [currentInput, setCurrentInput] = useState5("");
+  const [gameState, setGameState] = useState5("playing");
+  const [message, setMessage] = useState5("");
+  const [letterStatuses, setLetterStatuses] = useState5({});
+  const [bouncing, setBouncing] = useState5(false);
+  const { frame: bounceFrame } = useAnimation5({ interval: 80, isActive: bouncing });
+  const { offset: shakeOffset, trigger: triggerShake } = useShake();
+  const { jumpFrameForRow, startJump } = useJump();
+  const { revealProgressForRow, startReveal } = useReveal(
+    (pending) => {
+      const finishedRow = pending.guesses.length - 1;
+      const hasCorrect = pending.evaluations[finishedRow].some((s) => s === "correct");
+      setGuesses([...pending.guesses]);
+      setEvaluations(pending.evaluations.map((e) => [...e]));
+      setLetterStatuses(pending.letterStatuses);
+      setGameState(pending.nextState);
+      if (pending.nextState === "won") {
         setBouncing(true);
       } else if (hasCorrect) {
-        setJumpRow(finishedRowIndex);
-        resetJump();
+        startJump(finishedRow);
       }
     }
-  }, [revealFrame, revealRow]);
-  useEffect(() => {
-    if (jumpRow === null) return;
-    if (jumpFrame >= JUMP_TOTAL) setJumpRow(null);
-  }, [jumpFrame, jumpRow, JUMP_TOTAL]);
+  );
   function restart() {
     setTarget(pickRandom(words));
     setGuesses([]);
@@ -1001,9 +1174,6 @@ function Game({ words }) {
     setMessage("");
     setLetterStatuses({});
     setBouncing(false);
-    pendingResult.current = null;
-    setRevealRow(null);
-    setJumpRow(null);
   }
   useInput((input, key) => {
     if (gameState === "revealing") return;
@@ -1036,31 +1206,19 @@ function Game({ words }) {
       const evaluation = evaluateGuess(word, target);
       const newGuesses = [...guesses, word];
       const newEvals = [...evaluations, evaluation];
-      const nextLetterStatuses = { ...letterStatuses };
-      const priority = {
-        correct: 3,
-        present: 2,
-        absent: 1
-      };
-      word.split("").forEach((ch, i) => {
-        const s = evaluation[i];
-        if (!nextLetterStatuses[ch] || priority[s] > priority[nextLetterStatuses[ch]])
-          nextLetterStatuses[ch] = s;
-      });
+      const newLetterStatuses = mergeLetterStatuses(letterStatuses, word, evaluation);
       const nextState = word === target ? "won" : newGuesses.length >= MAX_GUESSES ? "lost" : "playing";
-      pendingResult.current = {
-        guesses: newGuesses,
-        evals: newEvals,
-        letterStatuses: nextLetterStatuses,
-        nextState
-      };
+      setGuesses(newGuesses);
+      setEvaluations(newEvals);
       setCurrentInput("");
       setMessage("");
-      setGuesses(newGuesses);
-      setEvaluations([...evaluations, evaluation]);
       setGameState("revealing");
-      setRevealRow(newGuesses.length - 1);
-      resetReveal();
+      startReveal(newGuesses.length - 1, {
+        guesses: newGuesses,
+        evaluations: newEvals,
+        letterStatuses: newLetterStatuses,
+        nextState
+      });
       return;
     }
     if (/^[a-zA-Z]$/.test(input) && currentInput.length < WORD_LENGTH) {
@@ -1068,19 +1226,12 @@ function Game({ words }) {
       setMessage("");
     }
   });
-  function triggerShake() {
-    resetShake();
-    setShaking(true);
-  }
   const activeRow = gameState === "playing" || gameState === "revealing" ? guesses.length : -1;
-  const shakeOffset = shaking ? shakeFrame % 2 === 0 ? -1 : 1 : 0;
-  return /* @__PURE__ */ jsxs(Box, { flexDirection: "column", alignItems: "center", paddingY: 1, children: [
-    /* @__PURE__ */ jsx(Text, { bold: true, color: "white", children: " W O R D L E " }),
-    /* @__PURE__ */ jsx(Box, { marginTop: 1, flexDirection: "column", children: Array(MAX_GUESSES).fill(null).map((_, i) => {
-      const isRevealing = i === revealRow;
-      const rowRevealProgress = isRevealing ? revealFrame : WORD_LENGTH * 2 + 1;
+  return /* @__PURE__ */ jsxs4(Box6, { flexDirection: "column", alignItems: "center", paddingY: 1, children: [
+    /* @__PURE__ */ jsx6(Text5, { bold: true, color: "white", children: " T E R M L E " }),
+    /* @__PURE__ */ jsx6(Box6, { marginTop: 1, flexDirection: "column", children: Array(MAX_GUESSES).fill(null).map((_, i) => {
       const isWonRow = gameState === "won" && i === guesses.length - 1;
-      return /* @__PURE__ */ jsx(
+      return /* @__PURE__ */ jsx6(
         Row,
         {
           guess: guesses[i] ?? null,
@@ -1088,65 +1239,35 @@ function Game({ words }) {
           isActive: i === activeRow && gameState === "playing",
           currentInput: i === activeRow ? currentInput : "",
           shakeOffset: i === activeRow && gameState === "playing" ? shakeOffset : 0,
-          revealProgress: rowRevealProgress,
+          revealProgress: revealProgressForRow(i),
           winBounceFrame: isWonRow && bouncing ? bounceFrame : null,
-          jumpFrame: jumpRow === i ? jumpFrame : -1
+          jumpFrame: jumpFrameForRow(i)
         },
         i
       );
     }) }),
-    /* @__PURE__ */ jsx(Box, { height: 1, marginTop: 1, children: message ? /* @__PURE__ */ jsx(Text, { color: "red", bold: true, children: message }) : /* @__PURE__ */ jsx(Text, { children: " " }) }),
-    gameState === "won" && /* @__PURE__ */ jsxs(Box, { flexDirection: "column", alignItems: "center", children: [
-      /* @__PURE__ */ jsxs(Text, { color: "green", bold: true, children: [
-        "You got it in ",
-        guesses.length,
-        "!"
-      ] }),
-      /* @__PURE__ */ jsx(Text, { color: "gray", children: "Enter to play again \xB7 Q to quit" })
-    ] }),
-    gameState === "lost" && /* @__PURE__ */ jsxs(Box, { flexDirection: "column", alignItems: "center", children: [
-      /* @__PURE__ */ jsxs(Text, { color: "red", bold: true, children: [
-        "The word was: ",
-        target.toUpperCase()
-      ] }),
-      /* @__PURE__ */ jsx(Text, { color: "gray", children: "Enter to play again \xB7 Q to quit" })
-    ] }),
-    /* @__PURE__ */ jsx(Keyboard, { letterStatuses }),
-    /* @__PURE__ */ jsx(Box, { marginTop: 1, children: /* @__PURE__ */ jsx(Text, { color: "gray", dimColor: true, children: "Type letters \xB7 Enter to guess \xB7 Backspace to delete \xB7 Ctrl+C to quit" }) })
+    /* @__PURE__ */ jsx6(
+      StatusMessage,
+      {
+        message,
+        gameState,
+        guessCount: guesses.length,
+        target
+      }
+    ),
+    /* @__PURE__ */ jsx6(Keyboard, { letterStatuses }),
+    /* @__PURE__ */ jsx6(Box6, { marginTop: 1, children: /* @__PURE__ */ jsx6(Text5, { color: "gray", dimColor: true, children: "Type letters \xB7 Enter to guess \xB7 Backspace to delete \xB7 Ctrl+C to quit" }) })
   ] });
 }
-function LoadingSpinner() {
-  const SPINNER = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
-  const { frame } = useAnimation({ interval: 80 });
-  return /* @__PURE__ */ jsxs(Box, { paddingY: 1, alignItems: "center", flexDirection: "column", children: [
-    /* @__PURE__ */ jsx(Text, { bold: true, color: "white", children: " W O R D L E " }),
-    /* @__PURE__ */ jsxs(Box, { marginTop: 1, gap: 1, children: [
-      /* @__PURE__ */ jsx(Text, { color: "green", children: SPINNER[frame % SPINNER.length] }),
-      /* @__PURE__ */ jsx(Text, { color: "gray", children: "Fetching word list\u2026" })
-    ] })
-  ] });
-}
+
+// src/App.tsx
+import { jsx as jsx7, jsxs as jsxs5 } from "react/jsx-runtime";
 function App() {
-  const [words, setWords] = useState(null);
-  const [loadError, setLoadError] = useState(null);
-  useEffect(() => {
-    fetch(WORDLE_LIST_URL).then((res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.text();
-    }).then((text) => {
-      const list = text.trim().split("\n").map((w) => w.trim().toLowerCase()).filter((w) => w.length === WORD_LENGTH);
-      setWords(list);
-    }).catch((err) => {
-      setLoadError(
-        `Failed to fetch word list (${err.message}), using built-in list.`
-      );
-      setWords(WORDS);
-    });
-  }, []);
-  if (!words) return /* @__PURE__ */ jsx(LoadingSpinner, {});
-  return /* @__PURE__ */ jsxs(Box, { flexDirection: "column", children: [
-    loadError && /* @__PURE__ */ jsx(Box, { justifyContent: "center", children: /* @__PURE__ */ jsx(Text, { color: "yellow", children: loadError }) }),
-    /* @__PURE__ */ jsx(Game, { words })
+  const { words, error } = useWordList();
+  if (words === null) return /* @__PURE__ */ jsx7(LoadingSpinner, {});
+  return /* @__PURE__ */ jsxs5(Box7, { flexDirection: "column", children: [
+    error !== null && /* @__PURE__ */ jsx7(Box7, { justifyContent: "center", children: /* @__PURE__ */ jsx7(Text6, { color: "yellow", children: error }) }),
+    /* @__PURE__ */ jsx7(Game, { words })
   ] });
 }
 
