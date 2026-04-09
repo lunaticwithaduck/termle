@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { WORDS as FALLBACK_WORDS } from '../words.js';
 import { WORD_LENGTH, WORDLE_LIST_URL } from '../constants.js';
 
 interface WordListState {
@@ -25,10 +24,7 @@ export function useWordList(): WordListState {
         setState({ words, error: null });
       })
       .catch((err: Error) => {
-        setState({
-          words: FALLBACK_WORDS,
-          error: `Failed to fetch word list (${err.message}), using built-in list.`,
-        });
+        setState({ words: null, error: err.message });
       });
   }, []);
 
