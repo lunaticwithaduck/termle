@@ -1,0 +1,24 @@
+{
+  "name": "wordle",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "esbuild index.ts --bundle --platform=node --format=esm --loader:.ts=ts --loader:.tsx=tsx --outfile=dist.js --external:ink --external:react",
+    "start": "npm run typecheck && npm run build && node dist.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "ink": "^7.0.0",
+    "react": "^19.2.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "esbuild": "^0.28.0",
+    "typescript": "^6.0.2"
+  }
+}
